@@ -1,6 +1,6 @@
 Name:           perl-generators
-Version:        1.11
-Release:        12%{?dist}
+Version:        1.13
+Release:        1%{?dist}
 Summary:        RPM Perl dependencies generators
 License:        GPL+
 URL:            http://jplesnik.fedorapeople.org/generators
@@ -13,6 +13,7 @@ BuildRequires:  make
 BuildRequires:  perl-generators
 %endif
 BuildRequires:  perl-interpreter >= 4:5.22.0-351
+BuildRequires:  perl(Config)
 BuildRequires:  perl(ExtUtils::MakeMaker) >= 6.76
 BuildRequires:  perl(File::Copy)
 BuildRequires:  perl(File::Find)
@@ -29,7 +30,6 @@ BuildRequires:  perl(lib)
 BuildRequires:  perl(Exporter)
 BuildRequires:  perl(Test::More)
 BuildRequires:  perl(Test::Simple)
-Requires:       perl(:MODULE_COMPAT_%(eval "`perl -V:version`"; echo $version))
 Requires:       perl-interpreter >= 4:5.22.0-351
 # Per Perl packaging guidelines, build-requiring perl-generators should
 # deliver Perl macros
@@ -44,12 +44,39 @@ Recommends:     perl(version)
 # The generators and attribute files were split from rpm-build
 Conflicts:      rpm-build < 4.11.2-15
 
+# Filter modules bundled for tests
+%global __provides_exclude_from %{?__provides_exclude_from:%__provides_exclude_from|}^%{_libexecdir}
+%global __requires_exclude %{?__requires_exclude:%__requires_exclude|}^perl\\(PerlNS\\)
+
 %description
 This package provides RPM Perl dependencies generators which are used for
 getting provides and requires from Perl binaries and modules.
 
+%package tests
+Summary:        Tests for %{name}
+Requires:       %{name} = %{?epoch:%{epoch}:}%{version}-%{release}
+Requires:       perl-Test-Harness
+%if %{defined perl_bootstrap}
+# Supply run-time dependencies manually when perl-generators is not available
+Requires:       perl(Exporter)
+Requires:       perl(lib)
+Requires:       perl(strict)
+Requires:       perl(Test::More)
+Requires:       perl(Test::Simple)
+Requires:       perl(warnings)
+%endif
+
+%description tests
+Tests from %{name}. Execute them
+with "%{_libexecdir}/%{name}/test".
+
 %prep
 %setup -q -n generators-%{version}
+# Help generators to recognize Perl scripts
+for F in t/*.t; do
+    perl -i -MConfig -ple 'print $Config{startperl} if $. == 1 && !s{\A#!.*perl\b}{$Config{startperl}}' "$F"
+    chmod +x "$F"
+done
 
 %build
 perl Makefile.PL INSTALLDIRS=vendor INSTALLVENDORSCRIPT=%{_rpmconfigdir} \
@@ -58,20 +85,37 @@ perl Makefile.PL INSTALLDIRS=vendor INSTALLVENDORSCRIPT=%{_rpmconfigdir} \
 
 %install
 %{make_install}
-%{_fixperms} $RPM_BUILD_ROOT/*
+%{_fixperms} %{buildroot}/*
 
 mkdir -p %{buildroot}%{_rpmconfigdir}/fileattrs/
 install -p -m 644 fileattrs/* '%{buildroot}%{_rpmconfigdir}/fileattrs'
+
+# Install tests
+mkdir -p %{buildroot}%{_libexecdir}/%{name}
+cp -a t %{buildroot}%{_libexecdir}/%{name}
+perl -i -pe "s{bin/perl}{%{_rpmconfigdir}/perl}" %{buildroot}%{_libexecdir}/%{name}/t/lib/PerlNS.pm
+cat > %{buildroot}%{_libexecdir}/%{name}/test << 'EOF'
+#!/bin/sh
+cd %{_libexecdir}/%{name} && exec prove -I . -j "$(getconf _NPROCESSORS_ONLN)"
+EOF
+chmod +x %{buildroot}%{_libexecdir}/%{name}/test
 
 %check
 make test
 
 %files
 %doc Changes TODO
-%{_rpmconfigdir}/perl.*
+%{_rpmconfigdir}/*
 %{_rpmconfigdir}/fileattrs/perl*.attr
 
+%files tests
+%{_libexecdir}/%{name}
+
 %changelog
+* Thu Nov 14 2024 Jitka Plesnikova <jplesnik@redhat.com> - 1.13-1
+- Resolves: RHEL-5537 - 1.13 bump
+- Package tests
+
 * Mon Aug 09 2021 Mohan Boddu <mboddu@redhat.com> - 1.11-12
 - Rebuilt for IMA sigs, glibc 2.34, aarch64 flags
   Related: rhbz#1991688
